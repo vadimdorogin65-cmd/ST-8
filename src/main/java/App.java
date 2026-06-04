@@ -3,142 +3,169 @@ import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
 import org.openqa.selenium.chrome.ChromeOptions;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class App {
+/**
+ * ST-8: автоматическое заполнение формы papercdcase.com и получение PDF-обложки.
+ *
+ * Сценарий: загрузить данные из data/data.txt -> открыть сайт -> заполнить форму ->
+ * выбрать формат A4 и тип Jewel Case -> отправить -> сохранить раскройку в result/cd.pdf.
+ */
+public final class App {
 
-    private static final String BASE_URL = "http://www.papercdcase.com/";
-    private static final int MAX_TRACKS = 16;
+    private static final String SITE_URL = "http://www.papercdcase.com/";
+    private static final int    TRACK_LIMIT = 16;          // на форме доступно 16 полей трека
+    private static final Duration WAIT = Duration.ofSeconds(15);
 
-    // XPaths for track input fields (left column: tracks 1-8, right column: tracks 9-16)
-    private static final String[] TRACK_XPATHS = {
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[1]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[2]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[3]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[4]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[5]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[6]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[7]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[1]/table/tbody/tr[8]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[1]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[2]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[3]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[4]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[5]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[6]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[7]/td[2]/input",
-        "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]/table/tbody/tr/td[2]/table/tbody/tr[8]/td[2]/input"
-    };
+    /** Неизменяемое представление данных обложки. */
+    private record Cover(String artist, String title, List<String> tracks) {}
 
     public static void main(String[] args) throws Exception {
-        Path projectRoot = Path.of(System.getProperty("user.dir"));
-        Path dataFile = projectRoot.resolve("data").resolve("data.txt");
-        Path resultDir = projectRoot.resolve("result");
+        Path root      = Path.of(System.getProperty("user.dir"));
+        Path dataFile  = root.resolve("data").resolve("data.txt");
+        Path resultDir = root.resolve("result");
+        Path target    = resultDir.resolve("cd.pdf");
+
+        Cover cover = readCover(dataFile);
         Files.createDirectories(resultDir);
+        clearOldDownloads(resultDir);
 
-        // Load data from data.txt
-        List<String> data = new ArrayList<>();
-        for (String line : Files.readAllLines(dataFile, StandardCharsets.UTF_8)) {
-            if (!line.isBlank()) data.add(line.stripTrailing());
-        }
-        String artist = data.get(0);
-        String title  = data.get(1);
-        List<String> tracks = new ArrayList<>();
-        for (int i = 2; i < data.size() && tracks.size() < MAX_TRACKS; i++) {
-            tracks.add(data.get(i));
-        }
-
-        // Configure Chrome to save downloads directly to result/
-        Map<String, Object> prefs = new HashMap<>();
-        prefs.put("download.default_directory", resultDir.toAbsolutePath().toString());
-        prefs.put("plugins.always_open_pdf_externally", true);
-        prefs.put("download.prompt_for_download", false);
-        ChromeOptions options = new ChromeOptions();
-        options.setExperimentalOption("prefs", prefs);
-
-        // Clean up old downloads before starting
-        try (var s = Files.list(resultDir)) {
-            for (Path p : s.toList()) {
-                String n = p.getFileName().toString().toLowerCase();
-                if (n.endsWith(".pdf") || n.endsWith(".crdownload")) Files.deleteIfExists(p);
-            }
-        }
-
-        WebDriver webDriver = new ChromeDriver(options);
+        WebDriver driver = openBrowser(resultDir);
+        WebDriverWait wait = new WebDriverWait(driver, WAIT);
         try {
-            webDriver.manage().timeouts().implicitlyWait(Duration.ofSeconds(10));
-            webDriver.get(BASE_URL);
+            driver.get(SITE_URL);
 
-            // Fill in artist and title
-            webDriver.findElement(By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[1]/td[2]/input"))
-                     .sendKeys(artist);
-            webDriver.findElement(By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[2]/td[2]/input"))
-                     .sendKeys(title);
-
-            // Fill in track list
-            for (int i = 0; i < tracks.size(); i++) {
-                webDriver.findElement(By.xpath(TRACK_XPATHS[i])).sendKeys(tracks.get(i));
+            // --- текстовые поля ---
+            type(wait, artistField(), cover.artist());
+            type(wait, titleField(),  cover.title());
+            for (int i = 0; i < cover.tracks().size(); i++) {
+                type(wait, trackField(i), cover.tracks().get(i));
             }
 
-            // Select Jewel Case (Type)
-            webDriver.findElement(By.xpath("//input[@name='template' and @value='jewel']")).click();
-            // Select A4 (Paper)
-            webDriver.findElement(By.xpath("//input[@name='size' and @value='a4']")).click();
-            // Select Western font
-            webDriver.findElement(By.xpath("//input[@name='lang' and @value='west']")).click();
-            // Force browser to save file (not open inline)
-            webDriver.findElement(By.xpath("//input[@name='force_saveas' and @value='yes']")).click();
+            // --- переключатели: тип обложки и формат бумаги ---
+            choose(driver, "template", "jewel");   // Jewel Case
+            choose(driver, "size",     "a4");       // формат A4
+            choose(driver, "lang",     "west");     // латинский шрифт
+            choose(driver, "force_saveas", "yes");  // принудительно скачивать файл
 
-            // Submit the form
-            WebElement btn = webDriver.findElement(
-                By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/p/input"));
-            btn.submit();
+            // --- генерация обложки ---
+            driver.findElement(submitButton()).submit();
 
-            // Wait for PDF to appear in result/
-            Path pdfFile = waitForPdf(resultDir);
-            Path target = resultDir.resolve("cd.pdf");
-            Files.deleteIfExists(target);
-            Files.move(pdfFile, target);
-            System.out.println("Saved: " + target);
+            // --- сохранение результата ---
+            Path downloaded = awaitDownload(resultDir, WAIT);
+            Files.move(downloaded, target, StandardCopyOption.REPLACE_EXISTING);
+            System.out.println("PDF сохранён: " + target.toAbsolutePath());
         } finally {
-            webDriver.quit();
+            driver.quit();
         }
     }
 
-    private static Path waitForPdf(Path dir) throws Exception {
-        for (int i = 0; i < 60; i++) {
-            Thread.sleep(1000);
-            try (var stream = Files.list(dir)) {
-                for (Path p : stream.toList()) {
-                    String name = p.getFileName().toString().toLowerCase();
-                    // Fully downloaded PDF
-                    if (name.endsWith(".pdf") && Files.size(p) > 0) {
-                        return p;
-                    }
-                    // Chrome in-progress download: wait for it to become stable, then rename
-                    if (name.endsWith(".crdownload")) {
-                        long size = Files.size(p);
-                        Thread.sleep(1000);
-                        if (Files.size(p) == size && size > 0) {
-                            Path finished = dir.resolve(name.replace(".crdownload", ""));
-                            if (!Files.exists(finished)) {
-                                Files.move(p, finished, StandardCopyOption.REPLACE_EXISTING);
-                            }
-                            return finished;
-                        }
-                    }
+    // ------------------------------------------------------------------ данные
+
+    /** Первая строка — исполнитель, вторая — альбом, далее — треки (не более TRACK_LIMIT). */
+    private static Cover readCover(Path file) throws IOException {
+        List<String> lines = new ArrayList<>();
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            if (!line.isBlank()) lines.add(line.strip());
+        }
+        if (lines.size() < 2) {
+            throw new IllegalStateException("В data.txt нужны минимум исполнитель и название альбома");
+        }
+        List<String> tracks = lines.subList(2, Math.min(lines.size(), 2 + TRACK_LIMIT));
+        return new Cover(lines.get(0), lines.get(1), List.copyOf(tracks));
+    }
+
+    // ------------------------------------------------------------- браузер/IO
+
+    private static WebDriver openBrowser(Path downloadDir) {
+        ChromeOptions options = new ChromeOptions();
+        options.setExperimentalOption("prefs", Map.of(
+            "download.default_directory", downloadDir.toAbsolutePath().toString(),
+            "download.prompt_for_download", false,
+            "plugins.always_open_pdf_externally", true   // не открывать PDF во встроенном просмотрщике
+        ));
+        return new ChromeDriver(options);
+    }
+
+    private static void clearOldDownloads(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) return;
+        try (var files = Files.list(dir)) {
+            for (Path p : files.toList()) {
+                String name = p.getFileName().toString().toLowerCase();
+                if (name.endsWith(".pdf") || name.endsWith(".crdownload")) {
+                    Files.deleteIfExists(p);
                 }
             }
         }
-        throw new IllegalStateException("PDF was not downloaded to " + dir);
+    }
+
+    /** Дожидается, пока Chrome завершит загрузку (.crdownload исчезнет) и вернёт готовый PDF. */
+    private static Path awaitDownload(Path dir, Duration timeout) throws IOException, InterruptedException {
+        long deadline = System.nanoTime() + timeout.multipliedBy(4).toNanos();
+        while (System.nanoTime() < deadline) {
+            boolean stillDownloading = false;
+            Path ready = null;
+            try (var files = Files.list(dir)) {
+                for (Path p : files.toList()) {
+                    String name = p.getFileName().toString().toLowerCase();
+                    if (name.endsWith(".crdownload")) stillDownloading = true;
+                    else if (name.endsWith(".pdf") && Files.size(p) > 0) ready = p;
+                }
+            }
+            if (ready != null && !stillDownloading) return ready;
+            Thread.sleep(500);
+        }
+        throw new IllegalStateException("PDF не был скачан в каталог " + dir);
+    }
+
+    // -------------------------------------------------------- действия с UI
+
+    private static void type(WebDriverWait wait, By locator, String text) {
+        WebElement field = wait.until(ExpectedConditions.elementToBeClickable(locator));
+        field.clear();
+        field.sendKeys(text);
+    }
+
+    /** Выбор radio-кнопки по имени группы и значению. */
+    private static void choose(WebDriver driver, String group, String value) {
+        driver.findElement(By.cssSelector(
+            "input[name='" + group + "'][value='" + value + "']")).click();
+    }
+
+    // ------------------------------------------------------------- локаторы
+
+    private static By artistField() {
+        return By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[1]/td[2]/input");
+    }
+
+    private static By titleField() {
+        return By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[2]/td[2]/input");
+    }
+
+    /**
+     * Поля треков расположены в двух колонках по 8 строк.
+     * index 0..7  -> колонка 1, строки 1..8; index 8..15 -> колонка 2, строки 1..8.
+     */
+    private static By trackField(int index) {
+        int column = index / 8 + 1;
+        int row    = index % 8 + 1;
+        return By.xpath(
+            "/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[3]/td[2]"
+            + "/table/tbody/tr/td[" + column + "]/table/tbody/tr[" + row + "]/td[2]/input");
+    }
+
+    private static By submitButton() {
+        return By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/p/input");
     }
 }
