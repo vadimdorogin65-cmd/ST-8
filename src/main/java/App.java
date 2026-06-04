@@ -16,19 +16,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/**
- * ST-8: автоматическое заполнение формы papercdcase.com и получение PDF-обложки.
- *
- * Сценарий: загрузить данные из data/data.txt -> открыть сайт -> заполнить форму ->
- * выбрать формат A4 и тип Jewel Case -> отправить -> сохранить раскройку в result/cd.pdf.
- */
 public final class App {
 
     private static final String SITE_URL = "http://www.papercdcase.com/";
-    private static final int    TRACK_LIMIT = 16;          // на форме доступно 16 полей трека
+    private static final int    TRACK_LIMIT = 16;
     private static final Duration WAIT = Duration.ofSeconds(15);
 
-    /** Неизменяемое представление данных обложки. */
     private record Cover(String artist, String title, List<String> tracks) {}
 
     public static void main(String[] args) throws Exception {
@@ -46,23 +39,19 @@ public final class App {
         try {
             driver.get(SITE_URL);
 
-            // --- текстовые поля ---
             type(wait, artistField(), cover.artist());
             type(wait, titleField(),  cover.title());
             for (int i = 0; i < cover.tracks().size(); i++) {
                 type(wait, trackField(i), cover.tracks().get(i));
             }
 
-            // --- переключатели: тип обложки и формат бумаги ---
-            choose(driver, "template", "jewel");   // Jewel Case
-            choose(driver, "size",     "a4");       // формат A4
-            choose(driver, "lang",     "west");     // латинский шрифт
-            choose(driver, "force_saveas", "yes");  // принудительно скачивать файл
+            choose(driver, "template", "jewel");
+            choose(driver, "size",     "a4");
+            choose(driver, "lang",     "west");
+            choose(driver, "force_saveas", "yes");
 
-            // --- генерация обложки ---
             driver.findElement(submitButton()).submit();
 
-            // --- сохранение результата ---
             Path downloaded = awaitDownload(resultDir, WAIT);
             Files.move(downloaded, target, StandardCopyOption.REPLACE_EXISTING);
             System.out.println("PDF сохранён: " + target.toAbsolutePath());
@@ -71,9 +60,6 @@ public final class App {
         }
     }
 
-    // ------------------------------------------------------------------ данные
-
-    /** Первая строка — исполнитель, вторая — альбом, далее — треки (не более TRACK_LIMIT). */
     private static Cover readCover(Path file) throws IOException {
         List<String> lines = new ArrayList<>();
         for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
@@ -86,14 +72,12 @@ public final class App {
         return new Cover(lines.get(0), lines.get(1), List.copyOf(tracks));
     }
 
-    // ------------------------------------------------------------- браузер/IO
-
     private static WebDriver openBrowser(Path downloadDir) {
         ChromeOptions options = new ChromeOptions();
         options.setExperimentalOption("prefs", Map.of(
             "download.default_directory", downloadDir.toAbsolutePath().toString(),
             "download.prompt_for_download", false,
-            "plugins.always_open_pdf_externally", true   // не открывать PDF во встроенном просмотрщике
+            "plugins.always_open_pdf_externally", true
         ));
         return new ChromeDriver(options);
     }
@@ -110,7 +94,6 @@ public final class App {
         }
     }
 
-    /** Дожидается, пока Chrome завершит загрузку (.crdownload исчезнет) и вернёт готовый PDF. */
     private static Path awaitDownload(Path dir, Duration timeout) throws IOException, InterruptedException {
         long deadline = System.nanoTime() + timeout.multipliedBy(4).toNanos();
         while (System.nanoTime() < deadline) {
@@ -129,21 +112,16 @@ public final class App {
         throw new IllegalStateException("PDF не был скачан в каталог " + dir);
     }
 
-    // -------------------------------------------------------- действия с UI
-
     private static void type(WebDriverWait wait, By locator, String text) {
         WebElement field = wait.until(ExpectedConditions.elementToBeClickable(locator));
         field.clear();
         field.sendKeys(text);
     }
 
-    /** Выбор radio-кнопки по имени группы и значению. */
     private static void choose(WebDriver driver, String group, String value) {
         driver.findElement(By.cssSelector(
             "input[name='" + group + "'][value='" + value + "']")).click();
     }
-
-    // ------------------------------------------------------------- локаторы
 
     private static By artistField() {
         return By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[1]/td[2]/input");
@@ -153,10 +131,6 @@ public final class App {
         return By.xpath("/html/body/table[2]/tbody/tr/td[1]/div/form/table/tbody/tr[2]/td[2]/input");
     }
 
-    /**
-     * Поля треков расположены в двух колонках по 8 строк.
-     * index 0..7  -> колонка 1, строки 1..8; index 8..15 -> колонка 2, строки 1..8.
-     */
     private static By trackField(int index) {
         int column = index / 8 + 1;
         int row    = index % 8 + 1;
